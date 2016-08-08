@@ -1,0 +1,413 @@
+<?php
+
+	/**
+	* @file
+	* Drupal product keys manager module.
+	*/
+
+	// Product license states.
+	define('PRODUCT_LICENSE_CREATED', 0);
+	define('PRODUCT_LICENSE_PENDING', 1);
+	define('PRODUCT_LICENSE_ACTIVE', 2);
+	define('PRODUCT_LICENSE_EXPIRED', 3);
+	define('PRODUCT_LICENSE_RETURNED', 4);
+	define('PRODUCT_LICENSE_REVOKED', 5);
+	define('DPK_CIPHER', 'bBeyB-qRXu_%BxdQGimzL2KqcZ=8-ZlshAalVHOALR^_m7FcY~9bi8DsUcpe');
+
+	/**
+	* Implements hook_menu().
+	*/
+	function product_keys_menu() {
+		global $user;
+
+		$items = array();
+
+		$items['admin/commerce/product-keys'] = array(
+			'title' => 'Product Keys',
+			'description' => 'Import product keys.',
+			'page callback' => 'product_keys_list',
+			'page arguments' => array('product_keys_list'),
+			'access arguments' => array('administer products'),
+			'weight' => -50,
+			'position' => 'left',
+		);
+
+		$items['admin/commerce/product-keys/upload/%'] = array(
+			'title' => 'Upload Product Keys',
+			'description' => 'Administer products, classes, and more.',
+			'page callback' => 'drupal_get_form',
+			'page arguments' => array('product_keys_form', 4),
+			'access arguments' => array('administer products'),
+			'type' => MENU_CALLBACK,
+			'weight' => -2,
+			'position' => 'left',
+		);
+
+		$items['user/%/product-keys'] = array(
+			'title' => 'Product Keys',
+			'description' => 'View your purchased product keys.',
+			'page callback' => 'product_keys_user_licenses',
+			'page arguments' => array('uid', 1),
+			'access callback' => 'product_keys_can_view_license',
+			'access arguments' => array(1, 2),
+			'type' => MENU_LOCAL_TASK
+		);
+
+		return $items;
+	}
+
+	/**
+	* Implements hook_admin_paths().
+	*/
+	function product_keys_admin_paths() {
+		$paths = array(
+			'node/*/edit/product' => TRUE,
+			'node/*/edit/features' => TRUE,
+			'node/*/edit/features/*' => TRUE,
+		);
+
+		return $paths;
+	}
+
+	/**
+	* Implements hook_permission().
+	*/
+	function product_keys_permission() {
+		$perms = array(
+			'administer products' => array(
+				'title' => t('Administer products'),
+			),
+			'administer product classes' => array(
+				'title' => t('Administer product classes'),
+			),
+			'administer product features' => array(
+				'title' => t('Administer product features'),
+			),
+			'administer own product features' => array(
+				'title' => t('Administer own product features'),
+			),
+		);
+
+		return $perms;
+	}
+
+	/**
+	* Access callback for user/%user/licenses.
+	*/
+	function product_keys_can_view_license($uid) {
+		global $user;
+
+		// Users with 'view all orders' are straightforward.
+		$access = user_access('view all orders');
+
+		// If the user is the current user and is not anonymous, also allow the "own" permissions.
+		if ($user->uid && $user->uid == $uid) {
+			$access = ($user->uid == $uid);
+			$access = $access || user_access('view all orders'); //user_access('view own orders');
+		}
+
+		return $access;
+	}
+
+	/**
+	* Displays the users license keys list.
+	*/
+	function product_keys_user_licenses($account, $uid) {
+		module_load_include('inc', 'system', 'system.admin');
+
+		drupal_set_title(t('My product keys'));
+
+		$blocks = array();
+		$build = array();
+		$rows = array();
+
+		if(isset($account) && $account != "") {
+			$query = db_select('product_keys', 'n')->fields('n', array('pkid', 'product_id', 'sku', 'license_key', 'order_id', 'order_item_id', 'customer_id', 'changed'))->condition('customer_id', $uid, '=')->orderBy('order_id', 'DESC')->execute();
+			
+			while($record = $query->fetchAssoc()) {
+				if(isset($record)) {
+					$node = db_select('commerce_product', 'n')->fields('n', array('title'))->condition('product_id', $record['product_id'], '=')->execute()->fetchAssoc();
+				
+					if(isset($node) && isset($node['title'])) {
+						$rows[] = array(
+							'Date' => t(date("m/d/Y", $record['changed'])),
+							'Order #' => l($record['order_id'], "user/$uid/orders/" . $record['order_id']),
+							'Product' => t($node['title']),
+							'Product Key' => t(product_key_decrypt($record['license_key']) == "" ? $record['license_key'] : product_key_decrypt($record['license_key'])),
+						);
+					}
+				}
+			}
+		}
+
+		$build['products'] = array(
+			'#theme' => 'table',
+			'#header' => array('Date', 'Order #', 'Product', 'Product Key'),
+			'#rows' => $rows
+		);
+
+		return $build;
+	}
+
+
+	/**
+	* Displays the products list with license upload link.
+	*/
+	function product_keys_list() {
+		module_load_include('inc', 'system', 'system.admin');
+
+		$blocks = array();
+		$build = array();
+		$rows = array();
+
+		$query = db_select('commerce_product', 'n')->fields('n', array('product_id','sku','title'))->execute();
+
+		while($record = $query->fetchAssoc()) {
+			if(isset($record) && isset($record['title'])) {
+				$rows[] = array(
+					l($record['title'], 'admin/commerce/product-keys/upload/' . $record['product_id']),
+					$record['sku'],
+					product_keys_get_stock($record['product_id'])
+				);
+			}
+		}
+
+		$build['products'] = array(
+			'#theme' => 'table',
+			'#header' => array('TITLE', 'SKU', 'PRODUCT KEYS'),
+			'#rows' => $rows
+		);
+
+		return $build;
+	}
+
+
+	/**
+	* Displays the product keys upload form.
+	*/
+	function product_keys_upload($path, $nid) {
+		module_load_include('inc', 'system', 'system.admin');
+
+		$blocks = array();
+		$build = array();
+		$rows = array();
+
+		$query = db_select('commerce_product', 'n')->fields('n', array('product_id','sku','title'))->execute();
+
+		while($record = $query->fetchAssoc()) {
+			if(isset($record) && isset($record['title'])) {
+				$rows[] = array(
+					l($record['title'], 'admin/commerce/product-keys/upload/' . $record['product_id']),
+					$record['sku'],
+					'0',
+					l('Upload Keys', 'admin/commerce/product-keys/upload/' . $record['product_id']),
+				);
+			}
+		}
+
+		$build[] = array('#markdown' => '<h2>Product #' . $nid . '</h2>');
+
+		$form = "product";
+
+		$build['upload'] = array('product_id' => $nid);
+		$build['upload'] = drupal_get_form('product_keys_form');
+
+		return $build;
+	}
+
+	/**
+	* Implements hook_form().
+	*/
+	function product_keys_form($form, &$form_state) {
+		$nid = $form_state['build_info']['args'][0];
+		$query = db_select('commerce_product', 'n')->fields('n', array('product_id','sku','title'))->execute();
+
+		while($record = $query->fetchAssoc()) {
+			if(isset($record) && isset($record['title'])) {
+				$products[$record['product_id']] = $record['title'];
+			}
+		}
+
+		$form = array(
+			'#type' => 'fieldset',
+			'#tree' => TRUE
+		);
+
+		$form['#attributes'] = array('enctype' => 'multipart/form-data');
+		$form['#type'] = 'fieldset';
+		$form['#title'] = t('Upload Spreadsheet');
+		$form['#description'] = t('Select the product to add product keys to, then select a spreadsheet file to upload.');
+
+		$form['product'] = array(
+			'#title' => 'Product',
+			'#type' => 'select',
+			'#default_value' => $nid,
+			'#options' => $products
+		);
+
+		$form['file'] = array(
+			'#title' => 'Spreadsheet',
+			'#type' => 'file'
+		);
+
+		$form['submit'] = array(
+			'#theme' => 'form',
+			'#type' => 'submit',
+			'#value' => t('Submit'),
+		);
+
+		return $form;
+	}
+
+	function product_key_encrypt($data) {
+		$path = str_replace("\\", "/", dirname(__FILE__));
+		require_once $path . '/encrypt/encrypt.php';
+		$crypt = new encryption_class();
+		return base64_encode($crypt->encrypt(DPK_CIPHER, $data));
+	}
+
+	function product_key_decrypt($data) {
+		$path = str_replace("\\", "/", dirname(__FILE__));
+		require_once $path . '/encrypt/encrypt.php';
+		$crypt = new encryption_class();
+		return $crypt->decrypt(DPK_CIPHER, base64_decode($data));
+	}
+
+	function product_keys_form_validate($form, &$form_state) {
+		// Validation logic.
+	}
+
+	function product_keys_form_submit($form, &$form_state) {
+		$file = file_save_upload('file', array('file_validate_extensions' => array()), 'public://');
+		$keys = product_keys_parse($file);
+
+		if(!db_table_exists('product_keys')) {
+			db_create_table('product_keys', drupal_get_schema_unprocessed('product_keys', 'product_keys'));
+			drupal_set_message(t('The product key table does not exist.'), 'warning');
+		}
+
+		$nid = $form_state['values']['product'];
+		$product = db_select('commerce_product', 'n')->fields('n')->condition('product_id', $nid, '=')->execute()->fetchAssoc();
+
+		$sku = $product['sku'];
+
+		foreach($keys as $key) {
+			$ckey = product_key_encrypt($key);
+
+			if($key != '') {
+				if(product_keys_exists($nid, $key)) {
+					$product['key_exists'][] = $key . ' = ' . 'FOUND';
+				} else {
+					$product['key_exists'][] = $key . ' = ' . 'NOT FOUND';
+
+					db_insert('product_keys')
+					->fields(array('product_id', 'sku', 'source', 'license_key', 'license_state', 'order_id', 'customer_id', 'created', 'changed'))
+					->values(array(
+						'product_id' => $product['product_id'],
+						'sku' => $product['sku'],
+						'source' => $file->filename,
+						'license_key' => $ckey,
+						'license_state' => 0,
+						'order_id' => 0,
+						'customer_id' => 0,
+						'created' => time(),
+						'changed' => time()
+					))
+					->execute();
+				}
+			}
+		}
+
+		$product['next_license'] = product_keys_next($sku);
+		$product['next_license']['license_key'] = product_key_decrypt($product['next_license']['license_key']);
+
+		// drupal_set_message(t("<pre>Product:\r\n" . json_encode($product, JSON_PRETTY_PRINT) . "</pre>"));
+	}
+
+	function product_keys_parse($file) {
+		$path = str_replace("\\", "/", dirname(__FILE__));
+		require_once $path . '/php_excel/PHPExcel/IOFactory.php';
+		$xlsx = PHPExcel_IOFactory::load(drupal_realpath($file->uri));
+		$xlsx = $xlsx->getActiveSheet()->toArray(null, true, true, true);
+		$keys = array();
+		
+		foreach($xlsx as $key) {
+			if(isset($key) && isset($key['A'])) {
+				$keys[] = $key['A'];
+			}
+		}
+
+		return $keys;
+	}
+
+	function product_keys_exists($nid, $key) {
+		$result = db_select('product_keys', 'n')
+			->fields('n')
+			->condition('product_id', $nid, '=')
+			->condition('license_key', $key, '=')
+			->execute()
+			->fetchAssoc();
+
+		return $result;
+	}
+
+	function product_keys_next($sku) {
+		$result = db_select('product_keys', 'n')
+			->fields('n')
+			->condition('sku', $sku, '=')
+			->condition('license_state', 0, '=')
+			->execute()
+			->fetchAssoc();
+
+		return $result;
+	}
+
+	function product_keys_assign($order, $order_product_id) {
+		// Check if product key has already been assigned
+		$result = db_select('product_keys', 'n')
+			->fields('n')
+			->condition('sku', $order['sku'], '=')
+			->condition('order_id', $order['order_id'], '=')
+			->condition('order_item_id', $order_product_id, '=')
+			->execute()
+			->fetchAssoc();
+
+		if($result) {
+			return $result;
+		} else {
+			// Assigns product key
+			$order['license'] = product_keys_next($order['sku']);
+
+			db_update('product_keys')
+				->fields(array(
+				'license_state' => 2,
+				'order_id' => $order['order_id'],
+				'order_item_id' => $order_product_id,
+				'customer_id' => $order['uid'],
+				'changed' => time()))
+				->condition('pkid', $order['license']['pkid'], '=')
+				->execute();
+
+			$result = db_select('product_keys', 'p')
+				->fields('p')
+				->condition('pkid', $order['license']['pkid'], '=')
+				->condition('order_id', $order['order_id'], '=')
+				->condition('order_item_id', $order_product_id, '=')
+				->execute()
+				->fetchAssoc();
+
+			return $result;
+		}
+	}
+
+	function product_keys_get_stock($nid) {
+		return db_select('product_keys')->condition('product_id', $nid, '=')->condition('license_state', 0, '=')->countQuery()->execute()->fetchField();
+	}
+
+	function product_keys_stock($sku) {
+		return db_select('product_keys')->condition('sku', $sku, '=')->condition('license_state', 0, '=')->countQuery()->execute()->fetchField();
+	}
+
+	function product_keys_update_stock($model, $nid) {
+
+	}

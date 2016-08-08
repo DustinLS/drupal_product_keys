@@ -1,0 +1,116 @@
+<?php
+	/**
+	* @file
+	* Drupal Prouct Keys Manager install file.
+	*/
+
+
+	/**
+	* Implements hook_schema().
+	*/
+	function product_keys_schema() {
+		$schema = array();
+
+		$schema['product_keys'] = array(
+			'description' => 'The list of product keys.',
+
+			'fields' => array(
+				'pkid' => array(
+					'description' => 'The product key identifier.',
+					'type' => 'serial',
+					'unsigned' => TRUE,
+					'not null' => TRUE,
+					'default' => NULL
+				),
+
+				'product_id' => array(
+					'description' => 'The product id of the parent product key.',
+					'type' => 'int',
+					'unsigned' => TRUE,
+					'not null' => TRUE,
+					'default' => 0
+				),
+
+				'sku' => array(
+					'description' => 'Product SKU.',
+					'type' => 'varchar',
+					'length' => 255,
+					'not null' => TRUE,
+					'default' => ''
+				),
+
+				'source' => array(
+					'description' => 'The spreadsheet file name containing the product key.',
+					'type' => 'varchar',
+					'length' => 255,
+					'not null' => TRUE,
+					'default' => '',
+				),
+
+				'license_key' => array(
+					'description' => 'The product key value.',
+					'type' => 'varchar',
+					'length' => 255,
+					'not null' => TRUE,
+					'default' => ''
+				),
+
+				'license_state' => array(
+					'description' => 'The product key state.',
+					'type' => 'int',
+					'unsigned' => TRUE,
+					'not null' => TRUE,
+					'default' => 0
+				),
+
+				'order_id' => array(
+					'description' => 'The order id assigned to the product key.',
+					'type' => 'int',
+					'unsigned' => TRUE,
+					'not null' => TRUE,
+					'default' => 0
+				),
+
+				'order_item_id' => array(
+					'description' => 'The order item id assigned to the product key.',
+					'type' => 'int',
+					'unsigned' => TRUE,
+					'not null' => TRUE,
+					'default' => 0
+				),
+
+				'customer_id' => array(
+					'description' => 'The customer id of the product key owner.',
+					'type' => 'int',
+					'unsigned' => TRUE,
+					'not null' => TRUE,
+					'default' => 0
+				),
+
+				'created' => array(
+					'description' => 'The timestamp indicating when the product key was created.',
+					'type' => 'int',
+					'unsigned' => TRUE,
+					'not null' => TRUE,
+					'default' => 0
+				),
+
+				'changed' => array(
+					'description' => 'The timestamp indicating when the product key was last updated.',
+					'type' => 'int',
+					'unsigned' => TRUE,
+					'not null' => TRUE,
+					'default' => 0
+				),
+			),
+
+			'indexes' => array(
+				'pkid' => array('pkid'),
+				'product_id' => array('product_id')
+			),
+
+			'primary key' => array('pkid'),
+		);
+
+		return $schema;
+	}
